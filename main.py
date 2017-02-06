@@ -106,7 +106,7 @@ if __name__ == "__main__":
         filename = 'images_full/' + str(row['splimage']) + '.jpg'
         img = cv2.imread(filename)
         if img is None:
-            # print "Image with filename " + str(row['splimage']) + " not found."
+            # print("Image with filename " + str(row['splimage']) + " not found."
             continue
         # trim the bottom watermark off dumbly
         img = img[0:-1 - 13, 0:-1]
@@ -123,7 +123,7 @@ if __name__ == "__main__":
         try:
             ID_num = df[df['splimage'] == filename[:-4]]['ID'].iloc[0]
         except Exception:
-            print "ID num not found"
+            print("ID num not found")
             continue
         # image was found
         # resize and preprocess
@@ -134,15 +134,15 @@ if __name__ == "__main__":
         # if no features were found, skip pill
         if compare_df.empty:
             continue
-        for idx, pill in pill_df_dict.iteritems():
+        for idx, pill in pill_df_dict.items():
             pill_result = pandas.Series()
             # ensure DataFrame exists
             if pill.empty:
                 continue
             # initialize comparison parameters to max
-            hist_corr = sys.maxint
-            aspect_difference = sys.maxint
-            mean_color_distance = sys.maxint
+            hist_corr = sys.maxsize
+            aspect_difference = sys.maxsize
+            mean_color_distance = sys.maxsize
             # iterate over each pill view in image, selecting one that best fits the comparison image
             for index, view in pill.iterrows():
                 # compare histogram correlation
@@ -168,10 +168,10 @@ if __name__ == "__main__":
         results_norm = results.div(results.sum(axis=1), axis=0)
         # calculate net error for each pill
         error_dict = {}
-        for idx, pill in results_norm.iteritems():
+        for idx, pill in results_norm.items():
             error_dict[idx] = pill.sum(axis=0)
         # Sort list by increasing error
         conf_list = [x[0] for x in sorted(error_dict.items(), key=lambda x: 1 - x[1], reverse=True)]
         # Print confidence of "dispensed" pill as percentile
-        print "Confidence is " + str(
-            100 * (1.00 - conf_list.index(ID_num) / float(len(conf_list)))) + " for pill ID " + str(ID_num)
+        print("Confidence is " + str(
+            100 * (1.00 - conf_list.index(ID_num) / float(len(conf_list)))) + " for pill ID " + str(ID_num))
