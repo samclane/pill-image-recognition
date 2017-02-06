@@ -95,27 +95,82 @@ def resize_img(img):
     img = cv2.resize(img, (new_w, new_h))
     return img
 
-# main function
-if __name__ == "__main__":
-    df = init_db()
-    # get dataframe of all pills with image
+
+def process_image(img):
+    # trim the bottom watermark off dumbly
+    img = img[0:-1 - 13, 0:-1]
+    # resize the image to a standard area while maintaining aspect ratio
+    img = resize_img(img)
+    contours, hierarchy = seg_image(img)
+    # create the dataframe holding all views for a single pill product
+    pill_dataframe = extract_features(img, contours)
+    return pill_dataframe
+
+
+def process_img_db(db_dataframe):
     pill_df_dict = {}
     # for all pills that have files
-    for index, row in df.iterrows():
+    for index, row in db_dataframe.iterrows():
         # read in image
         filename = 'images_full/' + str(row['splimage']) + '.jpg'
         img = cv2.imread(filename)
         if img is None:
-            # print("Image with filename " + str(row['splimage']) + " not found."
             continue
-        # trim the bottom watermark off dumbly
-        img = img[0:-1 - 13, 0:-1]
-        # resize the image to a standard area while maintaining aspect ratio
-        img = resize_img(img)
-        contours, hierarchy = seg_image(img)
-        pill_dataframe = extract_features(img, contours)
-        # create the dataframe holding all views for a single pill product
-        pill_df_dict[row['ID']] = pill_dataframe
+        pill_df_dict[row['ID']] = process_image(img)
+    return pill_df_dict
+
+
+def compare_img(compare_df, database_df):
+    for idx, pill in database_df.items():
+        pill_result = pandas.Series()
+        # ensure DataFrame exists
+        if pill.empty:
+            continue
+        # initialize comparison parameters to max
+        hist_corr = sys.maxsize
+        aspect_difference = sys.maxsize
+        mean_color_distance = sys.maxsize
+        # iterate over each pill view in image, selecting one that best fits the comparison image
+        for index, view in pill.iterrows():
+            # compare histogram correlation
+            comp_hist = math.fabs(cv2.compareHist(compare_df.iloc[0]['histogram'], view['histogram'], method=0) - 1)
+            if comp_hist < hist_corr:
+                hist_corr = comp_hist
+            # compare aspect ratio difference
+            comp_asp = math.fabs(compare_df.iloc[0]['aspect_ratio'] - view['aspect_ratio'])
+            if comp_asp < aspect_difference:
+                aspect_difference = comp_asp
+            # compare mean color distance
+            comp_mean = np.linalg.norm(
+                np.array(compare_df.iloc[0]['mean_color'][:3]) - np.array(view['mean_color'][:3]))
+            if comp_mean < mean_color_distance:
+                mean_color_distance = comp_mean
+        # store result as an indexed series
+        pill_result = pandas.Series(
+            [hist_corr, aspect_difference, mean_color_distance],
+            index=['hist_corr', 'aspect_diff', 'mean_color_diff'], dtype=np.float16)
+        # add result to dataframe
+        results[idx] = pill_result
+    # normalize results by row
+    results_norm = results.div(results.sum(axis=1), axis=0)
+    # calculate net error for each pill
+    error_dict = {}
+    for idx, pill in results_norm.items():
+        error_dict[idx] = pill.sum(axis=0)
+    # Sort list by increasing error
+    conf_list = [x[0] for x in sorted(error_dict.items(), key=lambda x: 1 - x[1], reverse=True)]
+    # Print confidence of "dispensed" pill as percentile
+    print("Confidence is " + str(
+        100 * (1.00 - conf_list.index(ID_num) / float(len(conf_list)))) + " for pill ID " + str(ID_num))
+    return conf_list
+
+
+# main function
+if __name__ == "__main__":
+    df = init_db()
+    # get dataframe of all pills with image
+    pill_df_dict = process_img_db(df)
+    # for all pills that have files
     # iterate through consumer images
     for filename in os.listdir("consumer"):
         # pass image to test
@@ -127,51 +182,10 @@ if __name__ == "__main__":
             continue
         # image was found
         # resize and preprocess
-        compareImage = resize_img(compareImage)
-        (contours, hierarchy) = seg_image(compareImage)
-        compare_df = extract_features(compareImage, contours)
+        compare_df = process_image(compareImage)
+        # create empty dataframe to store distance metrics
         results = pandas.DataFrame()
         # if no features were found, skip pill
         if compare_df.empty:
             continue
-        for idx, pill in pill_df_dict.items():
-            pill_result = pandas.Series()
-            # ensure DataFrame exists
-            if pill.empty:
-                continue
-            # initialize comparison parameters to max
-            hist_corr = sys.maxsize
-            aspect_difference = sys.maxsize
-            mean_color_distance = sys.maxsize
-            # iterate over each pill view in image, selecting one that best fits the comparison image
-            for index, view in pill.iterrows():
-                # compare histogram correlation
-                comp_hist = math.fabs(cv2.compareHist(compare_df.iloc[0]['histogram'], view['histogram'], method=0) - 1)
-                if comp_hist < hist_corr:
-                    hist_corr = comp_hist
-                # compare aspect ratio difference
-                comp_asp = math.fabs(compare_df.iloc[0]['aspect_ratio'] - view['aspect_ratio'])
-                if comp_asp < aspect_difference:
-                    aspect_difference = comp_asp
-                # compare mean color distance
-                comp_mean = np.linalg.norm(
-                    np.array(compare_df.iloc[0]['mean_color'][:3]) - np.array(view['mean_color'][:3]))
-                if comp_mean < mean_color_distance:
-                    mean_color_distance = comp_mean
-            # store result as an indexed series
-            pill_result = pandas.Series(
-                [hist_corr, aspect_difference, mean_color_distance],
-                index=['hist_corr', 'aspect_diff', 'mean_color_diff'], dtype=np.float16)
-            # add result to dataframe
-            results[idx] = pill_result
-        # normalize results by row
-        results_norm = results.div(results.sum(axis=1), axis=0)
-        # calculate net error for each pill
-        error_dict = {}
-        for idx, pill in results_norm.items():
-            error_dict[idx] = pill.sum(axis=0)
-        # Sort list by increasing error
-        conf_list = [x[0] for x in sorted(error_dict.items(), key=lambda x: 1 - x[1], reverse=True)]
-        # Print confidence of "dispensed" pill as percentile
-        print("Confidence is " + str(
-            100 * (1.00 - conf_list.index(ID_num) / float(len(conf_list)))) + " for pill ID " + str(ID_num))
+        compare_img(compareImage, pill_df_dict)
